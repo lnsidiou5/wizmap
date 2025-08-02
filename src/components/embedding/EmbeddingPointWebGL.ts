@@ -4,7 +4,7 @@ import type {
   PromptPoint
 } from '../../types/embedding-types';
 import d3 from '../../utils/d3-import';
-import { rgbToHex, timeit } from '../../utils/utils';
+import { joinPath, rgbToHex, timeit } from '../../utils/utils';
 import type { Embedding } from './Embedding';
 import { updatePopperTooltip } from './EmbeddingLabel';
 import fragmentShader from './shaders/point.frag?raw';
@@ -483,8 +483,9 @@ export function updateHighlightPoint(this: Embedding) {
   updatePopperTooltip(
     this.tooltipTop,
     oldHighlightPoint.node()! as unknown as HTMLElement,
-    this.hoverPoint.prompt,
-    'top'
+    this.hoverPoint.tooltip,
+    'top',
+    null
   );
 }
 
@@ -544,7 +545,10 @@ export function highlightPoint(
   if (this.gridData?.image !== undefined) {
     if (this.gridData?.image.imageGroup == this.hoverPoint.groupID) {
       this.hoverPoint.tooltip = `<img class="tooltip-image"
-        src="${this.gridData?.image.imageURLPrefix + this.hoverPoint.prompt}"
+        src="${joinPath(
+          this.gridData?.image.imageURLPrefix || '',
+          this.hoverPoint.prompt
+        )}"
       >`;
     }
   }
@@ -569,16 +573,23 @@ export function highlightPoint(
           imageSrc = jsonData[imageKey];
           if (imageSrc) {
             imageHTML = `<div class="tooltip-image-container">
-          <img class="tooltip-image" src="${
-            (this.gridData?.jsonPoint.imageURLPrefix || '') + imageSrc
-          }"></div>`;
+          <img class="tooltip-image" src="${joinPath(
+            this.gridData?.jsonPoint.imageURLPrefix || '',
+            imageSrc
+          )}"></div>`;
           }
         }
+
+        // Sanitize text by replacing < and > with HTML-safe equivalents
+        const sanitizedText = text
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/&/g, '&amp;');
 
         this.hoverPoint.tooltip = `<div class="tooltip-json-container">
         ${imageHTML}
         <div class="tooltip-json-text">
-          ${text}
+          ${sanitizedText}
         </div>
       </div>`;
       } catch (e) {
