@@ -79,8 +79,8 @@
     }
 
     case 'temp': {
-      dataURLs.point = DATA_BASE + '/temp/data.ndjson';
-      dataURLs.grid = DATA_BASE + '/temp/grid.json';
+      dataURLs.point = DATA_BASE + "/expMap/data.ndjson";//DATA_BASE + '/temp/data.ndjson';
+      dataURLs.grid = DATA_BASE + "/expMap/grid.json";//DATA_BASE + '/temp/grid.json';
       break;
     }
 
