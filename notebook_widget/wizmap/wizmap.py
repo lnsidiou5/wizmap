@@ -49,10 +49,12 @@ class JsonPointContentConfig(TypedDict):
     linkFieldKeys: list[str] | None
 
 load_dotenv()
-client = OpenAI()
-callCount = 0 # TODO: Remove
 
-def summarize_texts(texts: list[str], max_length: int = 200) -> str:
+def summarize_texts(
+        client, 
+        texts: list[str], 
+        max_length: int = 200
+    ) -> str:
     """
     Summarize a list of texts into a short summary string using ChatGPT.
 
@@ -63,40 +65,37 @@ def summarize_texts(texts: list[str], max_length: int = 200) -> str:
     Returns:
         Summary string
     """
-    prompt = """INSTRUCTION:
-        You are a linguist analyzing word usage. Given a set of sentences,
-        each containing a focus word, your task is to analyze these
-        sentences to determine how these focus words are commonly
-        used. Consider the word's part of speech, surrounding words,
-        tone, subject, context, and meaning. Summarize the highly
-        common patterns in 50 words or fewer, then list three key
-        descriptors.
-        For each sentence, you will receive:
-        - The focus word.
-        - The sentence, with the focus word enclosed in [].
-        Please note that these focus words may differ. Rather than
-        explaining them individually, focus on their common usage.
-        Where relevant, include concrete examples in your summary to
-        illustrate these patterns.
-        Provide your response in the following JSON format:
-        {"summary": "textual summary", "keywords": ["descriptor1",
-        "descriptor2", "descriptor3"]}
-        INPUT:"""
+    instructions = """You are a linguist analyzing word usage. Given a set of sentences,
+            each containing a focus word, your task is to analyze these
+            sentences to determine how these focus words are commonly
+            used. Consider the word's part of speech, surrounding words,
+            tone, subject, context, and meaning. Summarize the highly
+            common patterns in 50 words or fewer, then list three key
+            descriptors.
+            For each sentence, you will receive:
+            - The focus word.
+            - The sentence, with the focus word enclosed in [].
+            Please note that these focus words may differ. Rather than
+            explaining them individually, focus on their common usage.
+            Where relevant, include concrete examples in your summary to
+            illustrate these patterns.
+            Provide your response in the following JSON format:
+            {"keywords": ["descriptor1",
+            "descriptor2", "descriptor3"], "summary": "textual summary"}"""
+    prompt = ""
     for t in texts:
         prompt += f"{t}\n"
-    # response = client.chat.completions.create(
-    #     model="gpt-4o-mini",  # or gpt-4o
-    #     messages=[
-    #         {"role": "system", "content": "You summarize texts concisely."},
-    #         {"role": "user", "content": prompt}
-    #     ],
-    #     temperature=0.3
-    # )
-    global callCount
-    callCount+=1
-    return f"{len(texts)}"#response.choices[0].message.content.strip()
+    
+    response = client.responses.create(
+        model="gpt-4o-mini",  # or gpt-4o
+        instructions=instructions,
+        input=prompt,
+        temperature=0.3
+    )
+    return response.output_text
 
 def get_tile_summaries(
+    client,
     row_pid_map: dict[int, list[int]],
     row_pos_map: dict[int, list[float]],
     texts: list[str],
@@ -118,23 +117,25 @@ def get_tile_summaries(
     for r, pids in row_pid_map.items():
         # Collect all texts in this tile
         tile_texts = [texts[pid] for pid in pids]
-
+        # Check cache
         cache_key = tuple(sorted(pids))
         if cache is not None and cache_key in cache:
             summary = cache[cache_key]
         else:
-            summary = summarize_texts(tile_texts)
+            summary = summarize_texts(client, tile_texts)
             if cache is not None:
                 cache[cache_key] = summary
-
-        if (callCount % 100 == 0):
-            print(callCount, summary)
-
+        # TODO: delete
+        # print("tiles", tile_texts)
+        # print(summary)
+        # if (not summary is None):
+        #     raise Exception("We got it!")
         tile_summaries.append({"w": summary, "p": row_pos_map[r]})
 
     return tile_summaries
 
 def extract_level_topics_llm(
+        client,
         root: Node,
         texts: list[str],
         min_level=None,
@@ -154,6 +155,7 @@ def extract_level_topics_llm(
         
         # get the tile's LLM summaries
         tile_summaries = get_tile_summaries(
+            client,
             row_pid_map=row_pid_map,
             row_pos_map=row_node_map,
             texts=texts,
@@ -684,8 +686,9 @@ def generate_topic_dict(
     # Generate topics
     # use llm
     llm_cache = {}
+    client = OpenAI()
     level_tile_topics = extract_level_topics_llm(
-        root, texts, min_level=min_level, max_level=max_level, llm_cache=llm_cache
+        client, root, texts, min_level=min_level, max_level=max_level, llm_cache=llm_cache
     )
 
 
