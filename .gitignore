@@ -21,13 +21,15 @@ combine.ipynb
 public/data/diffusiondb/umap.ndjson
 .gitignoreghpage
 
-notebook-widget/wizmap/data.json
-notebook-widget/wizmap/*.ipynb
-notebook-widget/wizmap/*.html
-notebook-widget/wizmap/wizmap.js
+notebook_widget/wizmap/data.json
+notebook_widget/wizmap/*.ipynb
+notebook_widget/wizmap/*.html
+notebook_widget/wizmap/wizmap.js
 *.egg-info
 
 example/*.json
 example/*.ndjson
 notebooks
 public/data/temp
+
+.env

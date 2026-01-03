@@ -115,6 +115,12 @@ Install the dependencies:
 npm install
 ```
 
+Create .env file in root directory and add the OpenAI API Key
+
+```bash
+OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
+```
+
 Then run WizMap:
 
 ```bash

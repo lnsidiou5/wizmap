@@ -68,7 +68,7 @@ export default defineConfig(({ command, mode }) => {
         // Production: notebook widget
         return {
           build: {
-            outDir: 'notebook-widget/_wizmap',
+            outDir: 'notebook_widget/_wizmap',
             sourcemap: false,
             lib: {
               entry: 'src/main.ts',
@@ -90,7 +90,7 @@ export default defineConfig(({ command, mode }) => {
                   // Move target file to the notebook package
                   fs.copyFile(
                     path.resolve(options.dir, 'wizmap.js'),
-                    path.resolve(__dirname, 'notebook-widget/wizmap/wizmap.js'),
+                    path.resolve(__dirname, 'notebook_widget/wizmap/wizmap.js'),
                     error => {
                       if (error) throw error;
                     }

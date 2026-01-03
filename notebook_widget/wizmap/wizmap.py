@@ -15,6 +15,8 @@ from scipy.sparse import csr_matrix
 from sklearn.neighbors import KernelDensity
 from typing import Tuple, TypedDict, Literal
 
+from openai import OpenAI
+from dotenv import load_dotenv
 
 class JsonPointContentConfig(TypedDict):
     """Config for json point.
@@ -46,6 +48,163 @@ class JsonPointContentConfig(TypedDict):
     largeImageURLPrefix: str | None
     linkFieldKeys: list[str] | None
 
+load_dotenv()
+client = OpenAI()
+callCount = 0 # TODO: Remove
+
+def summarize_texts(texts: list[str], max_length: int = 200) -> str:
+    """
+    Summarize a list of texts into a short summary string using ChatGPT.
+
+    Args:
+        texts: List of text strings
+        max_length: Max tokens / approximate length of summary
+
+    Returns:
+        Summary string
+    """
+    prompt = """INSTRUCTION:
+        You are a linguist analyzing word usage. Given a set of sentences,
+        each containing a focus word, your task is to analyze these
+        sentences to determine how these focus words are commonly
+        used. Consider the word's part of speech, surrounding words,
+        tone, subject, context, and meaning. Summarize the highly
+        common patterns in 50 words or fewer, then list three key
+        descriptors.
+        For each sentence, you will receive:
+        - The focus word.
+        - The sentence, with the focus word enclosed in [].
+        Please note that these focus words may differ. Rather than
+        explaining them individually, focus on their common usage.
+        Where relevant, include concrete examples in your summary to
+        illustrate these patterns.
+        Provide your response in the following JSON format:
+        {"summary": "textual summary", "keywords": ["descriptor1",
+        "descriptor2", "descriptor3"]}
+        INPUT:"""
+    for t in texts:
+        prompt += f"{t}\n"
+    # response = client.chat.completions.create(
+    #     model="gpt-4o-mini",  # or gpt-4o
+    #     messages=[
+    #         {"role": "system", "content": "You summarize texts concisely."},
+    #         {"role": "user", "content": prompt}
+    #     ],
+    #     temperature=0.3
+    # )
+    global callCount
+    callCount+=1
+    return f"{len(texts)}"#response.choices[0].message.content.strip()
+
+def get_tile_summaries(
+    row_pid_map: dict[int, list[int]],
+    row_pos_map: dict[int, list[float]],
+    texts: list[str],
+    cache: dict | None = None,
+):
+    """
+    Get LLM summaries for each tile.
+    
+    Args:
+        count_mat: Count matrix (still needed for node structure)
+        row_pos_map: Mapping of row index to quadtree leaf node
+        texts: Original texts list
+    
+    Returns:
+        tile_summaries: List of dicts with summary and tile position
+    """
+    tile_summaries = []
+
+    for r, pids in row_pid_map.items():
+        # Collect all texts in this tile
+        tile_texts = [texts[pid] for pid in pids]
+
+        cache_key = tuple(sorted(pids))
+        if cache is not None and cache_key in cache:
+            summary = cache[cache_key]
+        else:
+            summary = summarize_texts(tile_texts)
+            if cache is not None:
+                cache[cache_key] = summary
+
+        if (callCount % 100 == 0):
+            print(callCount, summary)
+
+        tile_summaries.append({"w": summary, "p": row_pos_map[r]})
+
+    return tile_summaries
+
+def extract_level_topics_llm(
+        root: Node,
+        texts: list[str],
+        min_level=None,
+        max_level=None,
+        llm_cache=None,
+    ):
+    level_tile_sum = {}
+
+    if min_level is None:
+        min_level = 0
+    if max_level is None:
+        max_level = root.height
+
+    for level in tqdm(list(range(max_level, min_level - 1, -1))):
+        # Create a sparse matrix
+        csr_row_indexes, csr_column_indexes, row_node_map, row_pid_map = merge_leaves_before_level(root, level)
+        
+        # get the tile's LLM summaries
+        tile_summaries = get_tile_summaries(
+            row_pid_map=row_pid_map,
+            row_pos_map=row_node_map,
+            texts=texts,
+            cache=llm_cache
+            )
+        level_tile_sum[level] = tile_summaries
+
+    return level_tile_sum
+
+def generate_data_list(
+    xs: list[float],
+    ys: list[float],
+    texts: list[str],
+    times: list[str] | None = None,
+    labels: list[int] | None = None,
+) -> list[list]:
+    """Generate a list of data points.
+
+    Args:
+        xs (list[float]): A list of x coordinates of projected points
+        ys (list[float]): A list of y coordinates of projected points
+        texts (list[str]): A list of documents associated with points
+        times (list[str], optional): A list of timestamps associated with points.
+            Defaults to [].
+        labels (list[int], optional): A list of category labels associated
+            with points. Defaults to [].
+
+    Returns:
+        list[list]: A list of data points.
+    """
+    print("Start generating data list...")
+
+    data_list = []
+
+    for i, x in enumerate(xs):
+        cur_row = [x, ys[i], texts[i]]
+
+        if times is not None:
+            cur_row.append(times[i])
+
+            if labels is not None:
+                cur_row.append(labels[i])
+
+        else:
+            if labels is not None:
+                cur_row.append("")
+                cur_row.append(labels[i])
+
+        data_list.append(cur_row)
+
+    return data_list
 
 def generate_contour_dict(
     xs: list[float],
@@ -322,6 +481,7 @@ def merge_leaves_before_level(root: Node, target_level: int) -> Tuple[list, list
         csr_column_indexes (list): Column indexes for the sparse matrix. Each column
             is a prompt ID.
         row_node_map (dict): A dictionary map row index to the leaf node.
+        row_pid_map (dict): A dictionary map row index to the prompt ID.
     """
 
     x0, y0, x1, y1 = root.position
@@ -329,6 +489,7 @@ def merge_leaves_before_level(root: Node, target_level: int) -> Tuple[list, list
 
     # Find all leaves at or before the target level
     row_pos_map = {}
+    row_pid_map = {}
     stack = [root]
 
     # We create a sparse matrix by (data, (row index, column index))
@@ -366,9 +527,11 @@ def merge_leaves_before_level(root: Node, target_level: int) -> Tuple[list, list
             row_pos_map[cur_r] = list(map(lambda x: round(x, 3), cur_node.position))
 
             # Collect the prompt IDs
+            row_pid_map[cur_r] = []
             for d in cur_node.data:
                 csr_row_indexes.append(cur_r)
                 csr_column_indexes.append(d["pid"])
+                row_pid_map[cur_r].append(d["pid"])
 
             # Move on to the next tile / collection
             cur_r += 1
@@ -389,9 +552,11 @@ def merge_leaves_before_level(root: Node, target_level: int) -> Tuple[list, list
                 )
 
                 # Collect the prompt IDs
+                row_pid_map[cur_r] = []
                 for d in cur_node.data:
                     csr_row_indexes.append(cur_r)
                     csr_column_indexes.append(d["pid"])
+                    row_pid_map[cur_r].append(d["pid"])
 
                 # Move on to the next tile / collection
                 cur_r += 1
@@ -401,94 +566,7 @@ def merge_leaves_before_level(root: Node, target_level: int) -> Tuple[list, list
                     if c is not None:
                         stack.append((c))
 
-    return csr_row_indexes, csr_column_indexes, row_pos_map
-
-def get_tile_topics(count_mat, row_pos_map, ngrams, top_k=10):
-    """Get the top-k important keywords from all rows in the count_mat.
-
-    Args:
-        count_mat (csr_mat): A count matrix
-        row_pos_map (dict): A dictionary that maps row index to the corresponding
-            leaf node's location in the quadtree
-        ngrams (list[str]): Feature names in the count_mat
-        top_k (int): Number of keywords to extract
-    """
-
-    # Compute tf-idf score
-    t_tf_idf_model = TfidfTransformer()
-    t_tf_idf = t_tf_idf_model.fit_transform(count_mat)
-
-    # Get words with top scores for each tile
-    indices = top_n_idx_sparse(t_tf_idf, top_k)
-    scores = top_n_values_sparse(t_tf_idf, indices)
-
-    sorted_indices = np.argsort(scores, 1)
-    indices = np.take_along_axis(indices, sorted_indices, axis=1)
-    scores = np.take_along_axis(scores, sorted_indices, axis=1)
-
-    # Store these keywords
-    tile_topics = []
-
-    for r in row_pos_map:
-        word_scores = [
-            (ngrams[word_index], round(score, 4))
-            if word_index is not None and score > 0
-            else ("", 0.00001)
-            for word_index, score in zip(indices[r][::-1], scores[r][::-1])
-        ]
-
-        tile_topics.append({"w": word_scores, "p": row_pos_map[r]})
-
-    return tile_topics
-
-# TODO: Replace with LLM summaries 
-def extract_level_topics(
-    root: Node,
-    count_mat: csr_matrix,
-    texts: list[str],
-    ngrams: list[str],
-    min_level=None,
-    max_level=None,
-):
-    """Extract topics for all leaf nodes at all levels of the quadtree.
-
-    Args:
-        root (Noe): Quadtree node
-        count_mat (csr_matrix): Count vector for the corpus
-        texts (list[str]): A list of all the embeddings' texts
-        ngrams (list[str]): n-gram list for the count vectorizer
-    """
-
-    level_tile_topics = {}
-
-    if min_level is None:
-        min_level = 0
-
-    if max_level is None:
-        max_level = root.height
-
-    for level in tqdm(list(range(max_level, min_level - 1, -1))):
-        # Create a sparse matrix
-        csr_row_indexes, csr_column_indexes, row_node_map = merge_leaves_before_level(
-            root, level
-        )
-
-        csr_data = [1 for _ in range(len(csr_row_indexes))]
-        tile_mat = csr_matrix(
-            (csr_data, (csr_row_indexes, csr_column_indexes)),
-            shape=(len(texts), len(texts)),
-        )
-
-        # Transform the count matrix
-        new_count_mat = tile_mat @ count_mat
-
-        # Compute t-tf-idf scores and extract keywords
-        tile_topics = get_tile_topics(new_count_mat, row_node_map, ngrams)
-
-        level_tile_topics[level] = tile_topics
-
-    return level_tile_topics
-
+    return csr_row_indexes, csr_column_indexes, row_pos_map, row_pid_map
 
 def select_topic_levels(
     max_zoom_scale,
@@ -604,9 +682,12 @@ def generate_topic_dict(
     )
 
     # Generate topics
-    level_tile_topics = extract_level_topics(
-        root, count_mat, texts, ngrams, min_level=min_level, max_level=max_level
+    # use llm
+    llm_cache = {}
+    level_tile_topics = extract_level_topics_llm(
+        root, texts, min_level=min_level, max_level=max_level, llm_cache=llm_cache
     )
+
 
     # Create a dictionary to store the topics at different scale levels
     data_dict = {
@@ -626,7 +707,7 @@ def generate_topic_dict(
 
         for topic in cur_topics:
             # Get the topic name
-            name = "-".join([p[0] for p in topic["w"][:4]])
+            name = topic["w"]
             x = (topic["p"][0] + topic["p"][2]) / 2
             y = (topic["p"][1] + topic["p"][3]) / 2
             cur_data = {"x": round(x, 3), "y": round(y, 3), "n": name, "l": cur_level}
