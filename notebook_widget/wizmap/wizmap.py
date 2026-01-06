@@ -105,9 +105,11 @@ def get_tile_summaries(
     Get LLM summaries for each tile.
     
     Args:
-        count_mat: Count matrix (still needed for node structure)
+        client: OpenAI API client
+        row_pid_map: Map of row to PID
         row_pos_map: Mapping of row index to quadtree leaf node
         texts: Original texts list
+        cache: Used to cache, reducing API queries
     
     Returns:
         tile_summaries: List of dicts with summary and tile position
