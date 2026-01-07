@@ -5,6 +5,7 @@ import base64
 import pkgutil
 import ndjson
 import json
+import re
 
 from os.path import join
 from tqdm import tqdm
@@ -92,7 +93,13 @@ def summarize_texts(
         input=prompt,
         temperature=0.3
     )
-    return response.output_text
+    raw_text = response.output_text
+    # 1. Remove Markdown ```json ``` wrappers if present
+    json_text = re.sub(r"\`\`\`json|\`\`\`", "", raw_text).strip()
+
+    # 2. Remove trailing commas before } or ]
+    json_text = re.sub(r",\s*([}\]])", r"\1", json_text)
+    return json_text
 
 def get_tile_summaries(
     client,
