@@ -88,7 +88,7 @@ def summarize_texts(
         prompt += f"{t}\n"
     
     response = client.responses.create(
-        model="gpt-4o-mini",  # or gpt-4o
+        model="gpt-4o-mini",
         instructions=instructions,
         input=prompt,
         temperature=0.3
@@ -124,6 +124,11 @@ def get_tile_summaries(
     tile_summaries = []
 
     for r, pids in row_pid_map.items():
+        # if only one text, no need to summarize
+        if len(pids) <= 1:
+            summary = '{"keywords": ["NoSummary", "", ""], "summary": "No summary because there is 0 or 1 point"}'
+            tile_summaries.append({"w": summary, "p": row_pos_map[r]})
+            continue
         # Collect all texts in this tile
         tile_texts = [texts[pid] for pid in pids]
         # Check cache
