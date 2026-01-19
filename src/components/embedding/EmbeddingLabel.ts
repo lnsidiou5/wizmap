@@ -630,12 +630,21 @@ export function layoutTopicLabels(
   let inViewLabelNum = 0;
 
   for (const label of sortedLabelData) {
-    const twoLine = label.name.length > 12;
-    let line1 = label.name.slice(0, Math.floor(label.name.length / 2));
-    let line2 = label.name.slice(Math.floor(label.name.length / 2));
+    // 1. Parse the JSON string
+    const parsed = JSON.parse(label.name) as {
+      keywords: string[];
+      summary: string;
+    };
 
-    if (twoLine && label.name.split(LABEL_SPLIT).length >= 4) {
-      const words = label.name.split(LABEL_SPLIT);
+    // 2. Extract and join keywords
+    const keywordSlug = parsed.keywords.join("-");
+
+    const twoLine = keywordSlug.length > 12;
+    let line1 = keywordSlug.slice(0, Math.floor(keywordSlug.length / 2));
+    let line2 = keywordSlug.slice(Math.floor(keywordSlug.length / 2));
+
+    if (twoLine && keywordSlug.split(LABEL_SPLIT).length >= 4) {
+      const words = keywordSlug.split(LABEL_SPLIT);
       line1 = words.slice(0, 2).join('-') + '-';
       line2 = words.slice(2).join('-');
     }
@@ -645,7 +654,7 @@ export function layoutTopicLabels(
           getLatoTextWidth(line1, fontSize),
           getLatoTextWidth(line2, fontSize)
         )
-      : getLatoTextWidth(label.name, fontSize);
+      : getLatoTextWidth(keywordSlug, fontSize);
     const curTextHeight = twoLine ? textHeight * 1.8 : textHeight;
 
     // Try 4 different layout

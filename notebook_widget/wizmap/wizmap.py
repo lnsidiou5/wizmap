@@ -126,7 +126,7 @@ def get_tile_summaries(
     for r, pids in row_pid_map.items():
         # if only one text, no need to summarize
         if len(pids) <= 1:
-            summary = '{"keywords": ["NoSummary", "", ""], "summary": "No summary because there is 0 or 1 point"}'
+            summary = '{"keywords": ["No Summary"], "summary": "No summary because there is 0 or 1 point"}'
             tile_summaries.append({"w": summary, "p": row_pos_map[r]})
             continue
         # Collect all texts in this tile

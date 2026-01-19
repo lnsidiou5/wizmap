@@ -91,6 +91,9 @@
           <li>
             <a href="./?dataset=imdb"> IMDB Reviews (25k text) </a>
           </li>
+          <li>
+            <a href="./?dataset=word-contexts"> Word Contexts (4k text) </a>
+          </li>
         </ul>
       </div>
     </div>
