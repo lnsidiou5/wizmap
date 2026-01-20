@@ -19,6 +19,23 @@ from typing import Tuple, TypedDict, Literal
 from openai import OpenAI
 from dotenv import load_dotenv
 
+# TODO: delete
+callCounter = 0
+maxLen = 0
+def increment_counter():
+    global callCounter
+    callCounter += 1
+def print_counter():
+    print(callCounter)
+def reset_counter():
+    global callCounter
+    callCounter = 0
+def update_max(val):
+    global maxLen
+    maxLen = max(maxLen, val)
+def print_max():
+    print("max Size = ", maxLen)
+
 class JsonPointContentConfig(TypedDict):
     """Config for json point.
 
@@ -54,38 +71,21 @@ load_dotenv()
 def summarize_texts(
         client, 
         texts: list[str], 
-        max_length: int = 200
+        instructions: str
     ) -> str:
     """
     Summarize a list of texts into a short summary string using ChatGPT.
 
     Args:
         texts: List of text strings
-        max_length: Max tokens / approximate length of summary
+        instructions: the instructions given to the OpenAI model
 
     Returns:
         Summary string
     """
-    instructions = """You are a linguist analyzing word usage. Given a set of sentences,
-            each containing a focus word, your task is to analyze these
-            sentences to determine how these focus words are commonly
-            used. Consider the word's part of speech, surrounding words,
-            tone, subject, context, and meaning. Summarize the highly
-            common patterns in 50 words or fewer, then list three key
-            descriptors.
-            For each sentence, you will receive:
-            - The focus word.
-            - The sentence, with the focus word enclosed in [].
-            Please note that these focus words may differ. Rather than
-            explaining them individually, focus on their common usage.
-            Where relevant, include concrete examples in your summary to
-            illustrate these patterns.
-            Provide your response in the following JSON format:
-            {"keywords": ["descriptor1",
-            "descriptor2", "descriptor3"], "summary": "textual summary"}"""
     prompt = ""
     for t in texts:
-        prompt += f"{t}\n"
+        prompt += f"{t}\n\n"
     
     response = client.responses.create(
         model="gpt-4o-mini",
@@ -106,6 +106,7 @@ def get_tile_summaries(
     row_pid_map: dict[int, list[int]],
     row_pos_map: dict[int, list[float]],
     texts: list[str],
+    instructions: str,
     cache: dict | None = None,
 ):
     """
@@ -116,6 +117,7 @@ def get_tile_summaries(
         row_pid_map: Map of row to PID
         row_pos_map: Mapping of row index to quadtree leaf node
         texts: Original texts list
+        instructions: the instructions to give OpenAI model
         cache: Used to cache, reducing API queries
     
     Returns:
@@ -123,7 +125,7 @@ def get_tile_summaries(
     """
     tile_summaries = []
 
-    for r, pids in row_pid_map.items():
+    for r, pids in tqdm(row_pid_map.items()):
         # if only one text, no need to summarize
         if len(pids) <= 1:
             summary = '{"keywords": ["No Summary"], "summary": "No summary because there is 0 or 1 point"}'
@@ -136,14 +138,12 @@ def get_tile_summaries(
         if cache is not None and cache_key in cache:
             summary = cache[cache_key]
         else:
-            summary = summarize_texts(client, tile_texts)
+            # TODO: Redo
+            summary = summarize_texts(client, tile_texts, instructions)
+            increment_counter()
+            update_max(len(pids))
             if cache is not None:
                 cache[cache_key] = summary
-        # TODO: delete
-        # print("tiles", tile_texts)
-        # print(summary)
-        # if (not summary is None):
-        #     raise Exception("We got it!")
         tile_summaries.append({"w": summary, "p": row_pos_map[r]})
 
     return tile_summaries
@@ -152,6 +152,7 @@ def extract_level_topics_llm(
         client,
         root: Node,
         texts: list[str],
+        instructions: str,
         min_level=None,
         max_level=None,
         llm_cache=None,
@@ -162,20 +163,29 @@ def extract_level_topics_llm(
         min_level = 0
     if max_level is None:
         max_level = root.height
-
-    for level in tqdm(list(range(max_level, min_level - 1, -1))):
+    length = max_level - min_level + 1
+    index = 0
+    for level in list(range(max_level, min_level - 1, -1)):
         # Create a sparse matrix
         csr_row_indexes, csr_column_indexes, row_node_map, row_pid_map = merge_leaves_before_level(root, level)
         
+        # print current level
+        index += 1
+        print (f"Level {index}/{length}")
         # get the tile's LLM summaries
         tile_summaries = get_tile_summaries(
             client,
             row_pid_map=row_pid_map,
             row_pos_map=row_node_map,
             texts=texts,
+            instructions=instructions,
             cache=llm_cache
             )
+        #TODO: Remove
+        print_counter()
+        reset_counter()
         level_tile_sum[level] = tile_summaries
+    print_max()
 
     return level_tile_sum
 
@@ -638,6 +648,7 @@ def generate_topic_dict(
     xs: list[float],
     ys: list[float],
     texts: list[str],
+    instructions: str,
     max_zoom_scale=30,
     svg_width=1000,
     svg_height=1000,
@@ -651,6 +662,7 @@ def generate_topic_dict(
         xs ([float]): A list of x coordinates of projected points
         ys ([float]): A list of y coordinates of projected points
         texts ([str]): A list of documents associated with points
+        instructions (str): The instructions for the OpenAI query
         max_zoom_scale (float): The maximal zoom scale (default to zoom x 30)
         svg_width (float): The approximate size of the wizmap window
         svg_height (float): The approximate size of the wizmap window
@@ -702,7 +714,7 @@ def generate_topic_dict(
     llm_cache = {}
     client = OpenAI()
     level_tile_topics = extract_level_topics_llm(
-        client, root, texts, min_level=min_level, max_level=max_level, llm_cache=llm_cache
+        client, root, texts, instructions, min_level=min_level, max_level=max_level, llm_cache=llm_cache
     )
 
 
@@ -737,6 +749,7 @@ def generate_grid_dict(
     xs: list[float],
     ys: list[float],
     texts: list[str],
+    instructions: str,
     embedding_name="My Embedding",
     grid_size=200,
     max_sample=100000,
@@ -762,6 +775,7 @@ def generate_grid_dict(
         xs ([float]): A list of x coordinates of projected points
         ys ([float]): A list of y coordinates of projected points
         texts ([str]): A list of documents associated with points
+        instructions (str): The instructions for the OpenAI query
         embeddingName (str): Custom name of this embedding map
         grid_size (int, optional): The resolution of the grid. Defaults to 200
         max_sample (int, optional): Max number of samples to compute KDE from.
@@ -814,6 +828,7 @@ def generate_grid_dict(
         xs,
         ys,
         real_texts,
+        instructions,
         max_zoom_scale=max_zoom_scale,
         svg_width=svg_width,
         svg_height=svg_height,
