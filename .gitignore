@@ -36,6 +36,6 @@ public/data/temp
 
 *.csv
 
-expMap\word-contexts\12_perturbed.txt
+expMap/word-contexts/12_perturbed.txt
 
-public\data\chemical-structures
+public/data/chemical-structures/
