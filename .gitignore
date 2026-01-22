@@ -33,3 +33,9 @@ notebooks
 public/data/temp
 
 .env
+
+*.csv
+
+expMap\word-contexts\12_perturbed.txt
+
+public\data\chemical-structures

@@ -137,9 +137,22 @@ To use WizMap with your embeddings, you first need to install the `wizmap` Pytho
 pip install wizmap
 ```
 
-Then take a look at this [notebook](./example/imdb.ipynb) for a detailed guide. If your dataset includes images, take a look at this [notebook](./example/diffusiondb-images.ipynb).
+Then take a look at this [notebook](./expMap/word-contexts/word-contexts.ipynb) for a detailed guide. If your dataset includes images, take a look at this [notebook](./example/diffusiondb-images.ipynb).
 
 Spoiler alert: You'll be up and running with just two function calls from the `wizmap` library. These two JSON files contain pre-computed embedding summaries, distributions, and the original embedding data.
+
+Note that for the instructions given to the LLM, it **must** output in the following format:
+
+```json
+{
+  "keywords": ["descriptor1", "descriptor2", "descriptor3"],
+  "summary": "Textual summary describing the group"
+}
+```
+
+- keywords: an array of key descriptors that best characterize the group
+
+- summary: a textual summary (any length)
 
 After generating the JSON files, you have two options to use WizMap.
 
