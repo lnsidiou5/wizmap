@@ -56,7 +56,31 @@ export function drawLabels(
     const labelGroup = enter
       .append('g')
       .attr('class', `label-group zoom-${idealTreeLevel}`)
-      .classed('hidden', d => d.toHide);
+      .classed('hidden', d => d.toHide)
+      .on('click', (event, d) => {
+          if (d.toHide) return;      
+          event.preventDefault();
+          this.floatingWindowStoreValue.point = {"tooltip": "", "id": -1, "x": 0, "y":0, "prompt": d.name};
+          this.floatingWindowStoreValue.gridData = this.gridData;
+          try { // TODO: replace with window
+            const parsed = JSON.parse(d.name);
+            this.floatingWindowStoreValue.point["tooltip"] = parsed.keywords.join(', ');
+            this.floatingWindowStoreValue.point["prompt"] = `Summary: ${parsed.summary}`;         
+          } catch (err) {
+            this.floatingWindowStoreValue.point = {"tooltip": "", "id": -1, "x": 0, "y":0, "prompt": d.name};
+          }
+          this.floatingWindowStore.set(this.floatingWindowStoreValue);
+        });
+    // Make label clickable, to print window
+    labelGroup
+    .append('rect')
+    .attr('class', 'hitbox')
+    .attr('x', d => d.x)
+    .attr('y', d => d.y)
+    .attr('width', d => d.width)
+    .attr('height', d => d.height)
+    .style('fill', 'transparent')
+    .style('pointer-events', 'all');
 
     // Animation for individual group addition
     if (this.lastLabelNames.size > 0) {
@@ -630,14 +654,17 @@ export function layoutTopicLabels(
   let inViewLabelNum = 0;
 
   for (const label of sortedLabelData) {
+    let keywordSlug = label.name;
     // 1. Parse the JSON string
-    const parsed = JSON.parse(label.name) as {
-      keywords: string[];
-      summary: string;
-    };
+    try {
+      const parsed = JSON.parse(label.name);
+      if (Array.isArray(parsed?.keywords)) {
+        
+        // 2. Extract and join keywords
+        keywordSlug = parsed.keywords.join("-");
+      }
+    } catch {}
 
-    // 2. Extract and join keywords
-    const keywordSlug = parsed.keywords.join("-");
 
     const twoLine = keywordSlug.length > 12;
     let line1 = keywordSlug.slice(0, Math.floor(keywordSlug.length / 2));

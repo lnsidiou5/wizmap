@@ -84,6 +84,12 @@
       break;
     }
 
+    case 'chemical-structures': {
+      dataURLs.point = DATA_BASE + "/chemical-structures/data.ndjson";
+      dataURLs.grid = DATA_BASE + "/chemical-structures/grid.json";
+      break;
+    }
+
     case 'temp': {
       dataURLs.point = DATA_BASE + '/temp/data.ndjson';
       dataURLs.grid = DATA_BASE + '/temp/grid.json';

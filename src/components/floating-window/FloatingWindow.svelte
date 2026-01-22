@@ -40,6 +40,7 @@
   };
 
   $: mounted && component && !initialized && floatingWindowStore && initView();
+  $: pointId = floatingWindow?.floatingWindowStoreValue?.point?.id;
 </script>
 
 <style lang="scss">
@@ -62,7 +63,9 @@
   >
     <div class="window-info" title="Window">
       <span class="window-name">
-        Point {floatingWindow?.floatingWindowStoreValue.point?.id}
+        Point {typeof pointId === 'number'
+          ? pointId < 0 ? 'Group' : pointId
+          : ''}
       </span>
     </div>
 

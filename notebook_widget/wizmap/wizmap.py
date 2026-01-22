@@ -19,22 +19,6 @@ from typing import Tuple, TypedDict, Literal
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# TODO: delete
-callCounter = 0
-maxLen = 0
-def increment_counter():
-    global callCounter
-    callCounter += 1
-def print_counter():
-    print(callCounter)
-def reset_counter():
-    global callCounter
-    callCounter = 0
-def update_max(val):
-    global maxLen
-    maxLen = max(maxLen, val)
-def print_max():
-    print("max Size = ", maxLen)
 
 class JsonPointContentConfig(TypedDict):
     """Config for json point.
@@ -139,9 +123,7 @@ def get_tile_summaries(
             summary = cache[cache_key]
         else:
             # TODO: Redo
-            summary = summarize_texts(client, tile_texts, instructions)
-            increment_counter()
-            update_max(len(pids))
+            summary = str(len(tile_texts)) # summarize_texts(client, tile_texts, instructions)
             if cache is not None:
                 cache[cache_key] = summary
         tile_summaries.append({"w": summary, "p": row_pos_map[r]})
@@ -181,9 +163,6 @@ def extract_level_topics_llm(
             instructions=instructions,
             cache=llm_cache
             )
-        #TODO: Remove
-        print_counter()
-        reset_counter()
         level_tile_sum[level] = tile_summaries
     print_max()
 

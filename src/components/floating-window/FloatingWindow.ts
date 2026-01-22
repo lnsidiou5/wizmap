@@ -188,7 +188,16 @@ export class FloatingWindow {
       return sections;
     }
 
-    // Case 3: Everything else, we show it in one text section
+    // Case 3: If this is a point group, then add Keyword section, stored in tooltip
+    if (point.id < 0 && point.tooltip.length > 0) {
+      sections.push({
+        type: 'text',
+        header: 'Keywords',
+        content: point.tooltip
+      });
+    }
+
+    // Case 4: Everything else, we show it in one text section
     sections.push({
       type: 'text',
       header: 'Text',

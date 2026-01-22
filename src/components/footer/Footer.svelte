@@ -94,6 +94,9 @@
           <li>
             <a href="./?dataset=word-contexts"> Word Contexts (4k text) </a>
           </li>
+          <li>
+            <a href="./?dataset=chemical-structures"> Chemical Structures (2M text) </a>
+          </li>
         </ul>
       </div>
     </div>
