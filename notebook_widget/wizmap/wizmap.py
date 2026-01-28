@@ -17,7 +17,6 @@ from sklearn.neighbors import KernelDensity
 from typing import Tuple, TypedDict, Literal
 
 from openai import OpenAI
-from dotenv import load_dotenv
 
 
 class JsonPointContentConfig(TypedDict):
@@ -50,7 +49,22 @@ class JsonPointContentConfig(TypedDict):
     largeImageURLPrefix: str | None
     linkFieldKeys: list[str] | None
 
-load_dotenv()
+class BatchFileTracker:
+    # TODO: wrie comments and add function to check completion
+    def __init__(
+        self,
+        batchIds: list[str],
+        root: Node,
+        min_level: int,
+        max_level: int,
+        client: OpenAI,
+    ):
+        self.batchIds = batchIds
+        self.root = root
+        self.min_level = min_level
+        self.max_level = max_level
+        self.client = client
+
 
 def summarize_texts(
         client, 
@@ -86,7 +100,7 @@ def summarize_texts(
     return json_text
 
 def get_tile_summaries(
-    client,
+    client: OpenAI,
     row_pid_map: dict[int, list[int]],
     row_pos_map: dict[int, list[float]],
     texts: list[str],
@@ -122,8 +136,7 @@ def get_tile_summaries(
         if cache is not None and cache_key in cache:
             summary = cache[cache_key]
         else:
-            # TODO: Redo
-            summary = str(len(tile_texts)) # summarize_texts(client, tile_texts, instructions)
+            summary = summarize_texts(client, tile_texts, instructions)
             if cache is not None:
                 cache[cache_key] = summary
         tile_summaries.append({"w": summary, "p": row_pos_map[r]})
@@ -164,7 +177,6 @@ def extract_level_topics_llm(
             cache=llm_cache
             )
         level_tile_sum[level] = tile_summaries
-    print_max()
 
     return level_tile_sum
 
@@ -628,6 +640,7 @@ def generate_topic_dict(
     ys: list[float],
     texts: list[str],
     instructions: str,
+    client: OpenAI,
     max_zoom_scale=30,
     svg_width=1000,
     svg_height=1000,
@@ -642,6 +655,7 @@ def generate_topic_dict(
         ys ([float]): A list of y coordinates of projected points
         texts ([str]): A list of documents associated with points
         instructions (str): The instructions for the OpenAI query
+        client: OpenAI API client
         max_zoom_scale (float): The maximal zoom scale (default to zoom x 30)
         svg_width (float): The approximate size of the wizmap window
         svg_height (float): The approximate size of the wizmap window
@@ -691,7 +705,6 @@ def generate_topic_dict(
     # Generate topics
     # use llm
     llm_cache = {}
-    client = OpenAI()
     level_tile_topics = extract_level_topics_llm(
         client, root, texts, instructions, min_level=min_level, max_level=max_level, llm_cache=llm_cache
     )
@@ -729,6 +742,7 @@ def generate_grid_dict(
     ys: list[float],
     texts: list[str],
     instructions: str,
+    client: OpenAI,
     embedding_name="My Embedding",
     grid_size=200,
     max_sample=100000,
@@ -755,6 +769,7 @@ def generate_grid_dict(
         ys ([float]): A list of y coordinates of projected points
         texts ([str]): A list of documents associated with points
         instructions (str): The instructions for the OpenAI query
+        client: OpenAI API client
         embeddingName (str): Custom name of this embedding map
         grid_size (int, optional): The resolution of the grid. Defaults to 200
         max_sample (int, optional): Max number of samples to compute KDE from.
@@ -808,6 +823,7 @@ def generate_grid_dict(
         ys,
         real_texts,
         instructions,
+        client,
         max_zoom_scale=max_zoom_scale,
         svg_width=svg_width,
         svg_height=svg_height,
@@ -996,3 +1012,265 @@ def visualize(data_url, grid_url, height=700):
 
     # Display the iframe
     display_html(iframe, raw=True)
+
+def init_topic_summary_batch(
+    xs: list[float],
+    ys: list[float],
+    texts: list[str],
+    instructions: str,
+    client: OpenAI,
+    max_zoom_scale=30,
+    svg_width=1000,
+    svg_height=1000,
+    ideal_tile_width=35,
+    stop_words: list[str] | Literal["english"] = "english",
+    json_point_content_config: JsonPointContentConfig | None = None,
+):
+    """Generate a grid dictionary object that encodes the contour plot and the
+    associated topics of different regions on the projected embedding space.
+
+    Args:
+        xs ([float]): A list of x coordinates of projected points
+        ys ([float]): A list of y coordinates of projected points
+        texts ([str]): A list of documents associated with points
+        instructions (str): The instructions for the OpenAI query
+        client: OpenAI API client
+        embeddingName (str): Custom name of this embedding map
+        grid_size (int, optional): The resolution of the grid. Defaults to 200
+        max_sample (int, optional): Max number of samples to compute KDE from.
+            Defaults to 100000
+        random_seed (int, optional): Seed for the random state. Defaults to 202355
+        max_zoom_scale (float): The maximal zoom scale (default to zoom x 30)
+        svg_width (float): The approximate size of the wizmap window
+        svg_height (float): The approximate size of the wizmap window
+        ideal_tile_width (float): The ideal tile width in pixels
+        stop_words (list[str] | Literal["english"]): A set of stop words to filter out when generating topics.
+        json_point_content_config (JsonPointContentConfig | None): Config for json point.
+            A json point can include both image and text, etc.
+
+    Returns:
+        dict: A dictionary object encodes the grid data.
+    """
+
+    print("Start generating multi-level summaries...")
+    # If the user uses json point, we need to extract the text content first
+    if json_point_content_config is not None:
+        real_texts = [
+            json.loads(d)[json_point_content_config["textKey"]] for d in texts
+        ]
+    else:
+        real_texts = texts
+    
+    topic_dict = init_topic_dict_helper(
+        xs,
+        ys,
+        real_texts,
+        instructions,
+        client,
+        max_zoom_scale=max_zoom_scale,
+        svg_width=svg_width,
+        svg_height=svg_height,
+        ideal_tile_width=ideal_tile_width,
+        stop_words=stop_words,
+    )
+
+    return topic_dict
+
+def init_topic_dict_helper(
+    xs: list[float],
+    ys: list[float],
+    texts: list[str],
+    instructions: str,
+    client: OpenAI,
+    max_zoom_scale=30,
+    svg_width=1000,
+    svg_height=1000,
+    ideal_tile_width=35,
+    stop_words: list[str] | Literal["english"] = "english",
+):
+    """Generate a topic dictionary object that encodes the topics of different
+    regions in the embedding map across scales.
+
+    Args:
+        xs ([float]): A list of x coordinates of projected points
+        ys ([float]): A list of y coordinates of projected points
+        texts ([str]): A list of documents associated with points
+        instructions (str): The instructions for the OpenAI query
+        client: OpenAI API client
+        max_zoom_scale (float): The maximal zoom scale (default to zoom x 30)
+        svg_width (float): The approximate size of the wizmap window
+        svg_height (float): The approximate size of the wizmap window
+        stop_words (list[str] | Literal["english"]): Stop words for the count vectorizer.
+
+    Returns:
+        dict: A dictionary object encodes the contour plot.
+    """
+    data = []
+
+    # Create data array
+    for i, x in enumerate(xs):
+        cur_data = {
+            "x": x,
+            "y": ys[i],
+            "pid": i,
+        }
+        data.append(cur_data)
+
+    # Build the quadtree
+    tree = Quadtree()
+    tree.add_all_data(data)
+
+    # Build the count matrix
+    root = tree.get_node_representation()
+
+    xs = [d["x"] for d in data]
+    ys = [d["y"] for d in data]
+    x_domain = [np.min(xs), np.max(xs)]
+    y_domain = [np.min(ys), np.max(ys)]
+
+    # Get suggestions of quadtree levels to extract
+    min_level, max_level = select_topic_levels(
+        max_zoom_scale,
+        svg_width,
+        svg_height,
+        x_domain,
+        y_domain,
+        tree.extent(),
+        ideal_tile_width,
+    )
+
+    # Generate topics
+    # use llm
+    llm_cache = {}
+    ids = create_level_topics_batch(
+        client, root, texts, instructions, min_level=min_level, max_level=max_level, llm_cache=llm_cache
+    )
+
+    # Create a dictionary to store the topics at different scale levels
+    data_dict = {
+        "extent": tree.extent(),
+        "data": {},
+        "range": [
+            float(x_domain[0]),
+            float(y_domain[0]),
+            float(x_domain[1]),
+            float(y_domain[1]),
+        ],
+    }
+
+    return data_dict
+
+def create_level_topics_batch(
+    client,
+    root: Node,
+    texts: list[str],
+    instructions: str,
+    min_level=None,
+    max_level=None,
+    llm_cache=None,
+    max_requests_per_batch = 50000,
+    batch_name="wizmap-topic-summaries",
+): 
+    requests = build_topic_batch_requests(
+        root, texts, instructions, min_level, max_level, llm_cache
+    )
+
+    batch_ids = []
+
+    for i in range(0, len(requests), max_requests_per_batch):
+        chunk = requests[i : i + max_requests_per_batch]
+        chunk_idx = i // max_requests_per_batch
+
+        batch_input_path = f"{batch_name}_{chunk_idx}.jsonl"
+
+        with open(batch_input_path, "w") as f:
+            for r in chunk:
+                f.write(json.dumps(r) + "\n")
+
+        batch_input_file = client.files.create(
+            file=open(batch_input_path, "rb"),
+            purpose="batch"
+        )
+
+        batch = client.batches.create(
+            input_file_id=batch_input_file.id,
+            endpoint="/v1/responses",
+            completion_window="24h",
+            metadata={
+                "name": f"{batch_name}_{chunk_idx}",
+                "chunk_index": chunk_idx,
+            }
+        )
+
+        batch_ids.append({
+            "batch_id": batch.id,
+            "input_file": batch_input_path,
+            "chunk_index": chunk_idx,
+        })
+    tracker = BatchFileTracker(batchIds=batch_ids, root=root, min_level=min_level, max_level=max_level)
+    return tracker
+
+def build_topic_batch_requests(
+    root: Node,
+    texts: list[str],
+    instructions: str,
+    min_level: int,
+    max_level: int,
+    llm_cache: dict
+):
+    requests = []
+    length = max_level - min_level + 1
+    index = 0
+    for level in range(max_level, min_level - 1, -1):
+        _, _, row_pos_map, row_pid_map = merge_leaves_before_level(root, level)
+        
+        index += 1
+        for row_idx, pids in tqdm(row_pid_map.items(), f"Level {index}/{length}"):
+            if len(pids) <= 1:
+                continue
+            # Check cache, if duplicate
+            cache_key = tuple(sorted(pids))
+            if cache_key in llm_cache:
+                continue
+            tile_texts = [texts[pid] for pid in pids]
+            
+            prompt = "\n\n".join(tile_texts)
+
+            requests.append({
+                "custom_id": f"lvl:{level}|{row_idx}",
+                "method": "POST",
+                "url": "/v1/responses",
+                "body": {
+                    "model": "gpt-4o-mini",
+                    "response_format": { 
+                        "type": "json_object"
+                    },
+                    "messages": [
+                        {"role": "system", "content": instructions}, 
+                        {"role": "user", "content": prompt}
+                        ],
+                    "temperature": 0.3,
+                }
+            })
+
+    return requests
+
+# TODO: Complete for collecting responses
+
+def complete_topic_dict(
+    topic_dict,
+    level_tile_topics,
+    min_level,
+    max_level
+):
+    for cur_level in range(min_level, max_level + 1):
+        cur_topics = level_tile_topics[cur_level]
+        topic_dict["data"][cur_level] = []
+
+        for topic in cur_topics:
+            # Get the topic name
+            name = topic["w"]
+            x = (topic["p"][0] + topic["p"][2]) / 2
+            y = (topic["p"][1] + topic["p"][3]) / 2
+            cur_data = {"x": round(x, 3), "y": round(y, 3), "n": name, "l": cur_level}
+            topic_dict["data"][cur_level].append([round(x, 3), round(y, 3), name])
