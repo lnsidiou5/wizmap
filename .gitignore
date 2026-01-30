@@ -37,5 +37,7 @@ public/data/temp
 *.csv
 
 expMap/word-contexts/12_perturbed.txt
+expMap/word-contexts/*.jsonl
+expMap/word-contexts/saves.pkl
 
 public/data/chemical-structures/

@@ -6,6 +6,7 @@ import pkgutil
 import ndjson
 import json
 import re
+import pickle
 
 from os.path import join
 from tqdm import tqdm
@@ -50,20 +51,61 @@ class JsonPointContentConfig(TypedDict):
     linkFieldKeys: list[str] | None
 
 class BatchFileTracker:
-    # TODO: wrie comments and add function to check completion
+    """
+    Tracks batch IDs and embedding coordinates (xs, ys).
+    Supports save/load from a pickle file.
+    """
     def __init__(
         self,
-        batchIds: list[str],
-        root: Node,
-        min_level: int,
-        max_level: int,
-        client: OpenAI,
+        filename: str,
+        batchIds: list[dict] | None = None,
+        xs: list[float] | None = None,
+        ys: list[float] | None = None
     ):
-        self.batchIds = batchIds
-        self.root = root
-        self.min_level = min_level
-        self.max_level = max_level
-        self.client = client
+        if not filename.endswith(".pkl"):
+            filename += ".pkl"
+        self.filename = filename
+        self.batchIds = batchIds if batchIds is not None else []
+        self.xs = xs if xs is not None else []
+        self.ys = ys if ys is not None else []
+        if batchIds is None:
+            self.load()
+        
+    def save(self):
+        with open(self.filename, "wb") as f:
+            pickle.dump(
+                {
+                    "batchIds": self.batchIds,
+                    "xs": self.xs,
+                    "ys": self.ys,
+                },
+                f,
+            )
+
+    def load(self):
+        with open(self.filename, "rb") as f:
+            data = pickle.load(f)
+
+        self.batchIds = data.get("batchIds", [])
+        self.xs = data.get("xs", [])
+        self.ys = data.get("ys", [])
+    
+    def checkCompletion(self, client: OpenAI):
+        #  "batch_id": batch.id,
+        # "input_file": batch_input_path,
+        # "chunk_index": chunk_idx,
+        res = True
+        for batchInfo in self.batchIds:
+            batch_job = client.batches.retrieve(batchInfo["batch_id"])
+            if batch_job.status == "failed":
+                print(f"{batchInfo["batch_id"]} failed:", batch_job)
+                res = False
+            elif batch_job.status == "completed":
+                continue
+            else:
+                print(f"{batchInfo["batch_id"]}: ", batch_job.status)
+                res = False
+        return res
 
 
 def summarize_texts(
@@ -1019,12 +1061,14 @@ def init_topic_summary_batch(
     texts: list[str],
     instructions: str,
     client: OpenAI,
+    filename="saves.pkl",
     max_zoom_scale=30,
     svg_width=1000,
     svg_height=1000,
     ideal_tile_width=35,
-    stop_words: list[str] | Literal["english"] = "english",
-    json_point_content_config: JsonPointContentConfig | None = None,
+    json_point_content_config: JsonPointContentConfig | None = None,    
+    max_requests_per_batch = 50000,
+    batch_name="wizmap-topic-summaries",
 ):
     """Generate a grid dictionary object that encodes the contour plot and the
     associated topics of different regions on the projected embedding space.
@@ -1044,15 +1088,14 @@ def init_topic_summary_batch(
         svg_width (float): The approximate size of the wizmap window
         svg_height (float): The approximate size of the wizmap window
         ideal_tile_width (float): The ideal tile width in pixels
-        stop_words (list[str] | Literal["english"]): A set of stop words to filter out when generating topics.
         json_point_content_config (JsonPointContentConfig | None): Config for json point.
             A json point can include both image and text, etc.
 
     Returns:
-        dict: A dictionary object encodes the grid data.
+        Batch tracker
     """
 
-    print("Start generating multi-level summaries...")
+    print("Start generating multi-level summary...")
     # If the user uses json point, we need to extract the text content first
     if json_point_content_config is not None:
         real_texts = [
@@ -1061,20 +1104,22 @@ def init_topic_summary_batch(
     else:
         real_texts = texts
     
-    topic_dict = init_topic_dict_helper(
+    batch_tracker = init_topic_dict_helper(
         xs,
         ys,
         real_texts,
         instructions,
         client,
+        filename,
         max_zoom_scale=max_zoom_scale,
         svg_width=svg_width,
         svg_height=svg_height,
         ideal_tile_width=ideal_tile_width,
-        stop_words=stop_words,
+        max_requests_per_batch = max_requests_per_batch,
+        batch_name=batch_name,
     )
 
-    return topic_dict
+    return batch_tracker
 
 def init_topic_dict_helper(
     xs: list[float],
@@ -1082,11 +1127,13 @@ def init_topic_dict_helper(
     texts: list[str],
     instructions: str,
     client: OpenAI,
+    filename: str,
     max_zoom_scale=30,
     svg_width=1000,
     svg_height=1000,
     ideal_tile_width=35,
-    stop_words: list[str] | Literal["english"] = "english",
+    max_requests_per_batch = 50000,
+    batch_name="wizmap-topic-summaries",
 ):
     """Generate a topic dictionary object that encodes the topics of different
     regions in the embedding map across scales.
@@ -1097,13 +1144,13 @@ def init_topic_dict_helper(
         texts ([str]): A list of documents associated with points
         instructions (str): The instructions for the OpenAI query
         client: OpenAI API client
+        filename: name of save file for the data
         max_zoom_scale (float): The maximal zoom scale (default to zoom x 30)
         svg_width (float): The approximate size of the wizmap window
         svg_height (float): The approximate size of the wizmap window
-        stop_words (list[str] | Literal["english"]): Stop words for the count vectorizer.
 
     Returns:
-        dict: A dictionary object encodes the contour plot.
+        BatchTrackerFile: Object that keeps track of all batches sent
     """
     data = []
 
@@ -1143,22 +1190,19 @@ def init_topic_dict_helper(
     # use llm
     llm_cache = {}
     ids = create_level_topics_batch(
-        client, root, texts, instructions, min_level=min_level, max_level=max_level, llm_cache=llm_cache
+        client, 
+        root, 
+        texts, 
+        instructions, 
+        min_level=min_level, 
+        max_level=max_level, 
+        llm_cache=llm_cache, 
+        max_requests_per_batch=max_requests_per_batch,
+        batch_name=batch_name
     )
-
-    # Create a dictionary to store the topics at different scale levels
-    data_dict = {
-        "extent": tree.extent(),
-        "data": {},
-        "range": [
-            float(x_domain[0]),
-            float(y_domain[0]),
-            float(x_domain[1]),
-            float(y_domain[1]),
-        ],
-    }
-
-    return data_dict
+    tracker = BatchFileTracker(filename, batchIds=ids, xs = xs, ys = ys)
+    tracker.save()
+    return tracker
 
 def create_level_topics_batch(
     client,
@@ -1191,14 +1235,14 @@ def create_level_topics_batch(
             file=open(batch_input_path, "rb"),
             purpose="batch"
         )
-
+        # send batch
         batch = client.batches.create(
             input_file_id=batch_input_file.id,
             endpoint="/v1/responses",
             completion_window="24h",
             metadata={
                 "name": f"{batch_name}_{chunk_idx}",
-                "chunk_index": chunk_idx,
+                "chunk_index": f"{chunk_idx}",
             }
         )
 
@@ -1207,8 +1251,7 @@ def create_level_topics_batch(
             "input_file": batch_input_path,
             "chunk_index": chunk_idx,
         })
-    tracker = BatchFileTracker(batchIds=batch_ids, root=root, min_level=min_level, max_level=max_level)
-    return tracker
+    return batch_ids
 
 def build_topic_batch_requests(
     root: Node,
@@ -1232,6 +1275,7 @@ def build_topic_batch_requests(
             cache_key = tuple(sorted(pids))
             if cache_key in llm_cache:
                 continue
+            llm_cache[cache_key] = 1
             tile_texts = [texts[pid] for pid in pids]
             
             prompt = "\n\n".join(tile_texts)
@@ -1242,27 +1286,151 @@ def build_topic_batch_requests(
                 "url": "/v1/responses",
                 "body": {
                     "model": "gpt-4o-mini",
-                    "response_format": { 
-                        "type": "json_object"
-                    },
-                    "messages": [
+                    "input": [
                         {"role": "system", "content": instructions}, 
                         {"role": "user", "content": prompt}
                         ],
                     "temperature": 0.3,
                 }
             })
-
     return requests
 
 # TODO: Complete for collecting responses
 
-def complete_topic_dict(
-    topic_dict,
-    level_tile_topics,
-    min_level,
-    max_level
+def generate_batch_grid_dict(
+    client: OpenAI,
+    embedding_name="My Embedding",
+    savefile: str = "saves.pkl",
+    grid_size=200,
+    max_sample=100000,
+    random_seed=202355,
+    max_zoom_scale=30,
+    svg_width=1000,
+    svg_height=1000,
+    ideal_tile_width=35,
+    labels: list[int] | None = None,
+    group_names: list[str] | None = None,
+    times: list[str] | None = None,
+    time_format: str | None = None,
+    image_label: int | None = None,
+    image_url_prefix: str | None = None,
+    opacity: float | None = None,
+    json_point_content_config: JsonPointContentConfig | None = None,
 ):
+    batchDat = BatchFileTracker(savefile)
+    if not batchDat.checkCompletion(client):
+        raise Exception("Batch is not ready")
+    xs = batchDat.xs
+    ys = batchDat.ys
+
+    print("Start generating contours...")
+    contour_dict = generate_contour_dict(
+        xs,
+        ys,
+        grid_size=grid_size,
+        max_sample=max_sample,
+        random_seed=random_seed,
+        labels=labels,
+        group_names=group_names,
+        times=times,
+        time_format=time_format,
+    )
+
+    print("Start generating multi-level summaries...")
+    topic_dict = make_batch_topic_dict(
+        client,
+        batchDat,
+        xs,
+        ys, 
+        max_zoom_scale=max_zoom_scale,
+        svg_width=svg_width,
+        svg_height=svg_height,
+        ideal_tile_width=ideal_tile_width)
+
+    # Add meta data to the final output
+    grid_dict = contour_dict
+    grid_dict["topic"] = topic_dict
+    grid_dict["embeddingName"] = embedding_name
+
+    if opacity is not None:
+        grid_dict["opacity"] = opacity
+
+    # Create a config for image points
+    if image_label is not None:
+        image_config: dict[str, int | str | None] = {"imageGroup": image_label}
+
+        if image_url_prefix is not None:
+            image_config["imageURLPrefix"] = image_url_prefix
+
+        grid_dict["image"] = image_config
+
+    if json_point_content_config is not None:
+        grid_dict["jsonPoint"] = json_point_content_config
+
+    return grid_dict
+
+def make_batch_topic_dict(
+        client: OpenAI,
+        batchDat: BatchFileTracker,
+        xs: list[float],
+        ys: list[float],
+        max_zoom_scale=30,
+        svg_width=1000,
+        svg_height=1000,
+        ideal_tile_width=35,
+    ):
+
+    data = []
+
+    # Create data array
+    for i, x in enumerate(xs):
+        cur_data = {
+            "x": x,
+            "y": ys[i],
+            "pid": i,
+        }
+        data.append(cur_data)
+
+    # Build the quadtree
+    tree = Quadtree()
+    tree.add_all_data(data)
+
+    xs = [d["x"] for d in data]
+    ys = [d["y"] for d in data]
+    x_domain = [np.min(xs), np.max(xs)]
+    y_domain = [np.min(ys), np.max(ys)]
+
+    # Get suggestions of quadtree levels to extract
+    min_level, max_level = select_topic_levels(
+        max_zoom_scale,
+        svg_width,
+        svg_height,
+        x_domain,
+        y_domain,
+        tree.extent(),
+        ideal_tile_width,
+    )
+
+    level_tile_topics = load_batch_level_summaries(
+        root, 
+        client, 
+        batchDat, 
+        min_level=min_level, 
+        max_level=max_level)
+
+    # Create a dictionary to store the topics at different scale levels
+    topic_dict = {
+        "extent": tree.extent(),
+        "data": {},
+        "range": [
+            float(x_domain[0]),
+            float(y_domain[0]),
+            float(x_domain[1]),
+            float(y_domain[1]),
+        ],
+    }
+    # Build the count matrix
+    root = tree.get_node_representation()
     for cur_level in range(min_level, max_level + 1):
         cur_topics = level_tile_topics[cur_level]
         topic_dict["data"][cur_level] = []
@@ -1274,3 +1442,39 @@ def complete_topic_dict(
             y = (topic["p"][1] + topic["p"][3]) / 2
             cur_data = {"x": round(x, 3), "y": round(y, 3), "n": name, "l": cur_level}
             topic_dict["data"][cur_level].append([round(x, 3), round(y, 3), name])
+
+def load_batch_level_summaries(
+    root: Node,
+    client: OpenAI, 
+    batchDat: BatchFileTracker, 
+    min_level = None, 
+    max_level = None):
+
+    cache = {}
+    level_tile_topics = {}
+
+    if min_level is None:
+        min_level = 0
+
+    if max_level is None:
+        max_level = root.height
+
+    
+    length = max_level - min_level + 1
+    index = 0
+    for level in range(max_level, min_level - 1, -1):
+        _, _, row_pos_map, row_pid_map = merge_leaves_before_level(root, level)
+        
+        index += 1
+        for row_idx, pids in tqdm(row_pid_map.items(), f"Level {index}/{length}"):
+            if len(pids) <= 1:
+                continue
+            # Check cache, if duplicate
+            cache_key = tuple(sorted(pids))
+            if cache_key in cache:
+                summary = cache[cache_key]
+            else:
+                # TODO: finish
+                continue
+
+    return level_tile_topics
