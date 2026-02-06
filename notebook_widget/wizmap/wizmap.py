@@ -108,7 +108,8 @@ class BatchFileTracker:
     
     def send_batches(self, client: OpenAI):
         """
-        Send prepared batches to OpenAI for processing.
+        Send prepared batches to OpenAI for processing. 
+        Up to 50,000 requests, and a batch input file can be up to 200 MB in size
 
         Args:
             client: Initialized OpenAI client
@@ -1138,6 +1139,7 @@ def init_topic_summary_batch(
     instructions: str,
     client: OpenAI,
     filename="saves.pkl",
+    random_seed=202355,
     max_zoom_scale=30,
     svg_width=1000,
     svg_height=1000,
@@ -1194,6 +1196,7 @@ def init_topic_summary_batch(
         ideal_tile_width=ideal_tile_width,
         max_requests_per_batch = max_requests_per_batch,
         batch_name=batch_name,
+        random_seed=random_seed,
     )
     if send_when_done:
         batch_tracker.send_batches(client)
@@ -1212,6 +1215,8 @@ def init_topic_dict_helper(
     svg_height=1000,
     ideal_tile_width=35,
     max_requests_per_batch = 50000,
+    random_seed=202355,
+    sample_size=500,
     batch_name="wizmap-topic-summaries",
 ):
     """Generate a topic dictionary object that encodes the topics of different
@@ -1277,7 +1282,9 @@ def init_topic_dict_helper(
         max_level=max_level, 
         llm_cache=llm_cache, 
         max_requests_per_batch=max_requests_per_batch,
-        batch_name=batch_name
+        batch_name=batch_name,
+        random_seed=random_seed,
+        sample_size=sample_size,
     )
     tracker = BatchFileTracker(filename, batchIds=ids, xs = xs, ys = ys)
     return tracker
@@ -1292,9 +1299,12 @@ def create_level_topics_batch(
     llm_cache=None,
     max_requests_per_batch = 50000,
     batch_name="wizmap-topic-summaries",
+    random_seed=202355,
+    sample_size=500,
 ): 
     requests = build_topic_batch_requests(
-        root, texts, instructions, min_level, max_level, llm_cache
+        root, texts, instructions, min_level, 
+        max_level, llm_cache, random_seed, sample_size
     )
 
     batch_ids = []
@@ -1321,8 +1331,11 @@ def build_topic_batch_requests(
     instructions: str,
     min_level: int,
     max_level: int,
-    llm_cache: dict
+    llm_cache: dict,
+    random_seed: int,
+    sample_size: int,
 ):
+    rng = random.Random(random_seed)
     requests = []
     length = max_level - min_level + 1
     index = 0
@@ -1339,6 +1352,9 @@ def build_topic_batch_requests(
                 continue
             llm_cache[cache_key] = 1
             tile_texts = [texts[pid] for pid in pids]
+
+            if len(tile_texts) > sample_size: # random sample if too many
+                tile_texts = rng.sample(tile_texts, sample_size)
             
             prompt = "\n\n".join(tile_texts)
 
