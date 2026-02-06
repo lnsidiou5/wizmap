@@ -57,7 +57,7 @@ class BatchFileTracker:
     """
     def __init__(
         self,
-        filename: str,
+        filename: str = "saves.pkl",
         batchIds: list[dict] | None = None,
         xs: list[float] | None = None,
         ys: list[float] | None = None
@@ -93,7 +93,6 @@ class BatchFileTracker:
     def checkCompletion(self, client: OpenAI):
         #  "batch_id": batch.id,
         # "input_file": batch_input_path,
-        # "chunk_index": chunk_idx,
         res = True
         for batchInfo in self.batchIds:
             batch_job = client.batches.retrieve(batchInfo["batch_id"])
@@ -106,7 +105,84 @@ class BatchFileTracker:
                 print(f"{batchInfo["batch_id"]}: ", batch_job.status)
                 res = False
         return res
+    
+    def send_batches(self, client: OpenAI):
+        """
+        Send prepared batches to OpenAI for processing.
 
+        Args:
+            client: Initialized OpenAI client
+
+        Returns:
+            None
+        """
+        for i in tqdm(range(len(self.batchIds)), "Sending batches"):
+            batch_input_path = self.batchIds[i]["input_file"]
+
+            batch_input_file = client.files.create(
+                file=open(batch_input_path, "rb"),
+                purpose="batch"
+            )
+            # send batch
+            batch = client.batches.create(
+                input_file_id=batch_input_file.id,
+                endpoint="/v1/responses",
+                completion_window="24h"
+            )
+
+            self.batchIds[i]["batch_id"] = batch.id
+        # autosave after updating batches
+        self.save()
+
+    def download_batch_outputs(self, client: OpenAI, savePrefix = "results"):
+        """
+        Download batch output files once processing is complete.
+
+        Args:
+            client: Initialized OpenAI client
+            savePrefix: Prefix added to the front of each downloaded output file name
+
+        Returns:
+            None
+        """
+        if not self.checkCompletion(client): # make sure batch is all done
+            raise Exception("Batch is not ready")
+        for i in tqdm(range(len(self.batchIds)), "Downloading batch output files"):
+            cBatch = self.batchIds[i]
+            batch_job = client.batches.retrieve(cBatch["batch_id"])
+            result_file_id = batch_job.output_file_id
+            result = client.files.content(result_file_id).content
+            # download into files
+            result_file_name = f"{savePrefix}_{cBatch["input_file"]}"
+            with open(result_file_name, 'wb') as file:
+                file.write(result)
+    
+    def get_output_data(self, savePrefix = "results"):
+        """
+        Retrieve output data generated from batch output downloads.
+
+        Args:
+            savePrefix: Prefix added to the batch input file names when saving results
+
+        Returns:
+            dict: Output data from the processed batch (key: custom_id, value: json text)
+        """
+        results = {}
+        for i in range(len(self.batchIds)):
+            cBatch = self.batchIds[i]
+            result_file_name = f"{savePrefix}_{cBatch["input_file"]}"
+            with open(result_file_name, 'r') as file:
+                for line in tqdm(file, f"Reading batches ({i+1}/{len(self.batchIds)})"):
+                    json_object = json.loads(line.strip())
+                    # parse object for json
+                    raw_text = json_object["response"]["body"]["output"][0]["content"][0]["text"]
+                    # 1. Remove Markdown ```json ``` wrappers if present
+                    json_text = re.sub(r"\`\`\`json|\`\`\`", "", raw_text).strip()
+
+                    # 2. Remove trailing commas before } or ]
+                    json_text = re.sub(r",\s*([}\]])", r"\1", json_text)
+                    results[json_object["custom_id"]]=raw_text
+        return results
 
 def summarize_texts(
         client, 
@@ -1069,6 +1145,7 @@ def init_topic_summary_batch(
     json_point_content_config: JsonPointContentConfig | None = None,    
     max_requests_per_batch = 50000,
     batch_name="wizmap-topic-summaries",
+    send_when_done = True,
 ):
     """Generate a grid dictionary object that encodes the contour plot and the
     associated topics of different regions on the projected embedding space.
@@ -1095,7 +1172,7 @@ def init_topic_summary_batch(
         Batch tracker
     """
 
-    print("Start generating multi-level summary...")
+    print("Start generating multi-level summary batches...")
     # If the user uses json point, we need to extract the text content first
     if json_point_content_config is not None:
         real_texts = [
@@ -1118,7 +1195,9 @@ def init_topic_summary_batch(
         max_requests_per_batch = max_requests_per_batch,
         batch_name=batch_name,
     )
-
+    if send_when_done:
+        batch_tracker.send_batches(client)
+    batch_tracker.save()
     return batch_tracker
 
 def init_topic_dict_helper(
@@ -1201,7 +1280,6 @@ def init_topic_dict_helper(
         batch_name=batch_name
     )
     tracker = BatchFileTracker(filename, batchIds=ids, xs = xs, ys = ys)
-    tracker.save()
     return tracker
 
 def create_level_topics_batch(
@@ -1231,25 +1309,9 @@ def create_level_topics_batch(
             for r in chunk:
                 f.write(json.dumps(r) + "\n")
 
-        batch_input_file = client.files.create(
-            file=open(batch_input_path, "rb"),
-            purpose="batch"
-        )
-        # send batch
-        batch = client.batches.create(
-            input_file_id=batch_input_file.id,
-            endpoint="/v1/responses",
-            completion_window="24h",
-            metadata={
-                "name": f"{batch_name}_{chunk_idx}",
-                "chunk_index": f"{chunk_idx}",
-            }
-        )
-
         batch_ids.append({
-            "batch_id": batch.id,
+            "batch_id": -1,
             "input_file": batch_input_path,
-            "chunk_index": chunk_idx,
         })
     return batch_ids
 
@@ -1295,7 +1357,7 @@ def build_topic_batch_requests(
             })
     return requests
 
-# TODO: Complete for collecting responses
+# For collecting responses
 
 def generate_batch_grid_dict(
     client: OpenAI,
@@ -1316,10 +1378,14 @@ def generate_batch_grid_dict(
     image_url_prefix: str | None = None,
     opacity: float | None = None,
     json_point_content_config: JsonPointContentConfig | None = None,
+    retrieve_batches = True,
 ):
     batchDat = BatchFileTracker(savefile)
     if not batchDat.checkCompletion(client):
         raise Exception("Batch is not ready")
+    # Batch retrieve data
+    if retrieve_batches:
+        batchDat.download_batch_outputs(client)
     xs = batchDat.xs
     ys = batchDat.ys
 
@@ -1395,6 +1461,8 @@ def make_batch_topic_dict(
     tree = Quadtree()
     tree.add_all_data(data)
 
+    root = tree.get_node_representation()
+
     xs = [d["x"] for d in data]
     ys = [d["y"] for d in data]
     x_domain = [np.min(xs), np.max(xs)]
@@ -1429,8 +1497,7 @@ def make_batch_topic_dict(
             float(y_domain[1]),
         ],
     }
-    # Build the count matrix
-    root = tree.get_node_representation()
+
     for cur_level in range(min_level, max_level + 1):
         cur_topics = level_tile_topics[cur_level]
         topic_dict["data"][cur_level] = []
@@ -1442,6 +1509,8 @@ def make_batch_topic_dict(
             y = (topic["p"][1] + topic["p"][3]) / 2
             cur_data = {"x": round(x, 3), "y": round(y, 3), "n": name, "l": cur_level}
             topic_dict["data"][cur_level].append([round(x, 3), round(y, 3), name])
+    
+    return topic_dict
 
 def load_batch_level_summaries(
     root: Node,
@@ -1451,7 +1520,7 @@ def load_batch_level_summaries(
     max_level = None):
 
     cache = {}
-    level_tile_topics = {}
+    level_tile_sum = {}
 
     if min_level is None:
         min_level = 0
@@ -1459,22 +1528,32 @@ def load_batch_level_summaries(
     if max_level is None:
         max_level = root.height
 
+    all_summaries = batchDat.get_output_data()
     
     length = max_level - min_level + 1
     index = 0
+    # go through each layer
     for level in range(max_level, min_level - 1, -1):
         _, _, row_pos_map, row_pid_map = merge_leaves_before_level(root, level)
         
+        tile_summaries = []
         index += 1
+        # get tiles summaries for the layer
         for row_idx, pids in tqdm(row_pid_map.items(), f"Level {index}/{length}"):
             if len(pids) <= 1:
+                summary = '{"keywords": ["No Summary"], "summary": "No summary because there is 0 or 1 point"}'
+                tile_summaries.append({"w": summary, "p": row_pos_map[row_idx]})
                 continue
             # Check cache, if duplicate
             cache_key = tuple(sorted(pids))
+            summary = '{"keywords": ["No Summary"], "summary": "Summary not generated"}'
             if cache_key in cache:
-                summary = cache[cache_key]
+                summary = all_summaries[cache[cache_key]]
             else:
-                # TODO: finish
-                continue
-
-    return level_tile_topics
+                key = f"lvl:{level}|{row_idx}"
+                if key in all_summaries:
+                    summary = all_summaries[key]
+                    cache[cache_key] = key
+            tile_summaries.append({"w": summary, "p": row_pos_map[row_idx]})
+        level_tile_sum[level] = tile_summaries
+    return level_tile_sum
