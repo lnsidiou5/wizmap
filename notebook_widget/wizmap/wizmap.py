@@ -6,6 +6,7 @@ import pkgutil
 import ndjson
 import json
 import re
+import time
 import pickle
 
 from os.path import join
@@ -90,20 +91,30 @@ class BatchFileTracker:
         self.xs = data.get("xs", [])
         self.ys = data.get("ys", [])
     
-    def checkCompletion(self, client: OpenAI):
+    def checkCompletion(self, client: OpenAI, verbose = False):
         #  "batch_id": batch.id,
         # "input_file": batch_input_path,
         res = True
+        progress = {}
         for batchInfo in self.batchIds:
+            if batchInfo["batch_id"] == -1:
+                res = False
+                progress["None"] = progress.get("None" , 0) + 1
+                continue
             batch_job = client.batches.retrieve(batchInfo["batch_id"])
+            progress[batch_job.status] = progress.get(batch_job.status , 0) + 1
             if batch_job.status == "failed":
-                print(f"{batchInfo["batch_id"]} failed:", batch_job)
+                if verbose:
+                    print(f"{batchInfo["input_file"]} failed")
+                    print(batch_job.errors)
                 res = False
             elif batch_job.status == "completed":
                 continue
             else:
-                print(f"{batchInfo["batch_id"]}: ", batch_job.status)
+                if verbose:
+                    print(f"{batchInfo["batch_id"]}: ", batch_job.status)
                 res = False
+        print(progress)
         return res
     
     def send_batches(self, client: OpenAI):
@@ -134,6 +145,47 @@ class BatchFileTracker:
             self.batchIds[i]["batch_id"] = batch.id
         # autosave after updating batches
         self.save()
+
+    def resend_incomplete_batches(self, client: OpenAI, batches_per_send = 10):
+        todo = []
+        resend_tags = ["cancelled", "failed", "expired"]
+        for i, batchInfo in enumerate(self.batchIds):
+            if batchInfo["batch_id"] == -1:
+                todo.append(i)
+                continue
+            batch_job = client.batches.retrieve(batchInfo["batch_id"])
+            if batch_job.status in resend_tags:
+                todo.append(i)
+        todo = todo[:batches_per_send]
+        if len(todo) == 0:
+            print("None to resend at the moment")
+            return
+        for i in tqdm(todo, "Sending batches"):
+            batch_input_path = self.batchIds[i]["input_file"]
+
+            batch_input_file = client.files.create(
+                file=open(batch_input_path, "rb"),
+                purpose="batch"
+            )
+            # send batch
+            batch = client.batches.create(
+                input_file_id=batch_input_file.id,
+                endpoint="/v1/responses",
+                completion_window="24h"
+            )
+
+            self.batchIds[i]["batch_id"] = batch.id
+        # autosave after updating batches
+        self.save()
+    
+    # sleep time is in seconds
+    def resend_until_done(self, client: OpenAI, sleep_time = 120, batches_per_send = 10):
+        cycle = 0
+        while not self.checkCompletion(client):
+            self.resend_incomplete_batches(client, batches_per_send)
+            time.sleep(sleep_time)
+            cycle += 1
+            print(f"Cycle {cycle} done")
 
     def download_batch_outputs(self, client: OpenAI, savePrefix = "results"):
         """
@@ -1148,6 +1200,7 @@ def init_topic_summary_batch(
     max_requests_per_batch = 50000,
     batch_name="wizmap-topic-summaries",
     send_when_done = True,
+    openai_model_params = {},
 ):
     """Generate a grid dictionary object that encodes the contour plot and the
     associated topics of different regions on the projected embedding space.
@@ -1197,6 +1250,7 @@ def init_topic_summary_batch(
         max_requests_per_batch = max_requests_per_batch,
         batch_name=batch_name,
         random_seed=random_seed,
+        openai_model_params=openai_model_params
     )
     if send_when_done:
         batch_tracker.send_batches(client)
@@ -1218,6 +1272,7 @@ def init_topic_dict_helper(
     random_seed=202355,
     sample_size=500,
     batch_name="wizmap-topic-summaries",
+    openai_model_params={}
 ):
     """Generate a topic dictionary object that encodes the topics of different
     regions in the embedding map across scales.
@@ -1285,6 +1340,7 @@ def init_topic_dict_helper(
         batch_name=batch_name,
         random_seed=random_seed,
         sample_size=sample_size,
+        params=openai_model_params
     )
     tracker = BatchFileTracker(filename, batchIds=ids, xs = xs, ys = ys)
     return tracker
@@ -1301,10 +1357,12 @@ def create_level_topics_batch(
     batch_name="wizmap-topic-summaries",
     random_seed=202355,
     sample_size=500,
+    params={},
 ): 
     requests = build_topic_batch_requests(
         root, texts, instructions, min_level, 
-        max_level, llm_cache, random_seed, sample_size
+        max_level, llm_cache, random_seed, sample_size,
+        params
     )
 
     batch_ids = []
@@ -1334,7 +1392,10 @@ def build_topic_batch_requests(
     llm_cache: dict,
     random_seed: int,
     sample_size: int,
+    params: dict
 ):
+    params.setdefault("model", "gpt-4o-mini")
+    params.setdefault("temperature", 0.3)
     rng = random.Random(random_seed)
     requests = []
     length = max_level - min_level + 1
@@ -1363,12 +1424,11 @@ def build_topic_batch_requests(
                 "method": "POST",
                 "url": "/v1/responses",
                 "body": {
-                    "model": "gpt-4o-mini",
+                    **params,
                     "input": [
                         {"role": "system", "content": instructions}, 
                         {"role": "user", "content": prompt}
                         ],
-                    "temperature": 0.3,
                 }
             })
     return requests
