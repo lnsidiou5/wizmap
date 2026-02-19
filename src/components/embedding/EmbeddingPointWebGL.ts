@@ -555,8 +555,8 @@ export function highlightPoint(
   }
   if (point.prompt.includes("; Scaffold: ")) {// handle chemical data
     let parts = point.prompt.split("; Scaffold: ");
-    let mol = OCL.Molecule.fromSmiles(parts[0]);
-    const mol_svg = mol.toSVG(100, 100, {autoCrop: true});
+    let mol = OCL.Molecule.fromSmiles(parts[0], {noCoordinates: true, noStereo: true});
+    const mol_svg = mol.toSVG(100, 100, 'mol_svg_tooltip', {autoCropMargin: 2, suppressChiralText: true});
     this.hoverPoint.tooltip = `<div class="tooltip-image-container" style="background:white;">
         <div class="tooltip-image">${mol_svg}</div>
       </div>`;

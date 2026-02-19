@@ -203,9 +203,9 @@ export class FloatingWindow {
       let parts = point.prompt.split("; Scaffold: ");
       let chemical = parts[0];
       let scaffold = parts[1].split(";")[0];
-      const svg_settings = {autoCrop: true};
-      const mol_svg = OCL.Molecule.fromSmiles(chemical).toSVG(200, 200, svg_settings);
-      const scaf_svg = OCL.Molecule.fromSmiles(scaffold).toSVG(100, 100, svg_settings);
+      const svg_settings = {autoCropMargin: 2, suppressChiralText: true};
+      const mol_svg = OCL.Molecule.fromSmiles(chemical, {noCoordinates: true, noStereo: true}).toSVG(200, 200, 'mol_svg', svg_settings);
+      const scaf_svg = OCL.Molecule.fromSmiles(scaffold, {noCoordinates: true, noStereo: true}).toSVG(100, 100, 'scaf_svg', svg_settings);
       let extraInfo = point.prompt.split(";");
       for (let i = 0; i < extraInfo.length; i++) {
         let splitter = extraInfo[i].split(":");
