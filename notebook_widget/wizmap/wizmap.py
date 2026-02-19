@@ -10,6 +10,7 @@ import time
 import pickle
 
 from os.path import join
+from pathlib import Path
 from tqdm import tqdm
 from IPython.display import display_html
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
@@ -183,9 +184,14 @@ class BatchFileTracker:
         cycle = 0
         while not self.checkCompletion(client):
             self.resend_incomplete_batches(client, batches_per_send)
-            time.sleep(sleep_time)
             cycle += 1
-            print(f"Cycle {cycle} done")
+            with tqdm(total=sleep_time, unit="s", desc=f"Cycle {cycle} Sleeping") as pbar:
+                elapsed = 0
+                while elapsed < sleep_time:
+                    sleep_step = min(5, sleep_time - elapsed)
+                    time.sleep(sleep_step)
+                    pbar.update(sleep_step)
+                    elapsed += sleep_step
 
     def download_batch_outputs(self, client: OpenAI, savePrefix = "results"):
         """
@@ -206,7 +212,8 @@ class BatchFileTracker:
             result_file_id = batch_job.output_file_id
             result = client.files.content(result_file_id).content
             # download into files
-            result_file_name = f"{savePrefix}_{cBatch["input_file"]}"
+            b = Path(cBatch["input_file"])
+            result_file_name = b.with_name(f"res_{b.name}")
             with open(result_file_name, 'wb') as file:
                 file.write(result)
     
@@ -221,11 +228,12 @@ class BatchFileTracker:
             dict: Output data from the processed batch (key: custom_id, value: json text)
         """
         results = {}
-        for i in range(len(self.batchIds)):
+        for i in tqdm(range(len(self.batchIds)), "Reading Batches"):
             cBatch = self.batchIds[i]
-            result_file_name = f"{savePrefix}_{cBatch["input_file"]}"
+            b = Path(cBatch["input_file"])
+            result_file_name = b.with_name(f"res_{b.name}")
             with open(result_file_name, 'r') as file:
-                for line in tqdm(file, f"Reading batches ({i+1}/{len(self.batchIds)})"):
+                for line in file:
                     json_object = json.loads(line.strip())
                     # parse object for json
                     raw_text = json_object["response"]["body"]["output"][0]["content"][0]["text"]
@@ -234,7 +242,7 @@ class BatchFileTracker:
 
                     # 2. Remove trailing commas before } or ]
                     json_text = re.sub(r",\s*([}\]])", r"\1", json_text)
-                    results[json_object["custom_id"]]=raw_text
+                    results[json_object["custom_id"]]=json_text
         return results
 
 def summarize_texts(

@@ -16,9 +16,10 @@ import type {
 } from '../../types/embedding-types';
 import d3 from '../../utils/d3-import';
 import { joinPath } from '../../utils/utils';
+import OCL from "openchemlib";
 
 interface FormattedSection {
-  type: 'text' | 'image' | 'link';
+  type: 'text' | 'image' | 'link' | 'svg';
   header: string;
   content: string;
 }
@@ -198,11 +199,51 @@ export class FloatingWindow {
     }
 
     // Case 4: Everything else, we show it in one text section
-    sections.push({
-      type: 'text',
-      header: 'Text',
-      content: point.prompt
-    });
+    if(point.id >=0 && point.prompt.includes("; Scaffold: ")) {
+      let parts = point.prompt.split("; Scaffold: ");
+      let chemical = parts[0];
+      let scaffold = parts[1].split(";")[0];
+      const svg_settings = {autoCrop: true};
+      const mol_svg = OCL.Molecule.fromSmiles(chemical).toSVG(200, 200, svg_settings);
+      const scaf_svg = OCL.Molecule.fromSmiles(scaffold).toSVG(100, 100, svg_settings);
+      let extraInfo = point.prompt.split(";");
+      for (let i = 0; i < extraInfo.length; i++) {
+        let splitter = extraInfo[i].split(":");
+        if (splitter.length == 1) {
+            sections.push({
+                type: 'text',
+                header: 'Chemical',
+                content: extraInfo[i]
+              });
+            sections.push({
+                type: 'svg',
+                header: 'Chemical Image',
+                content: mol_svg
+              });
+            continue;
+        }
+        let key = splitter[0].trim();
+        let val = splitter[1].trim();
+        sections.push({
+                type: 'text',
+                header: key,
+                content: val
+              });
+        if (i == 1) {
+          sections.push({
+            type: 'svg',
+            header: 'Scaffold Image',
+            content: scaf_svg
+          });
+        }
+      }
+    } else {
+      sections.push({
+        type: 'text',
+        header: 'Text',
+        content: point.prompt
+      });
+    }
     return sections;
   }
 

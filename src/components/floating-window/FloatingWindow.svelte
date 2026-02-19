@@ -106,6 +106,13 @@
               <a href="{section.content}" target="_blank">{section.content}</a>
             </div>
           </div>
+        {:else if section.type === 'svg'}
+          <div class="section">
+            <div class="section-header">{section.header}</div>
+            <div class="section-content">
+              {@html section.content}
+            </div>
+          </div>
         {:else}
           <div class="section">
             <div class="section-header">{section.header}</div>

@@ -71,16 +71,6 @@ export function drawLabels(
           }
           this.floatingWindowStore.set(this.floatingWindowStoreValue);
         });
-    // Make label clickable, to print window
-    labelGroup
-    .append('rect')
-    .attr('class', 'hitbox')
-    .attr('x', d => d.x)
-    .attr('y', d => d.y)
-    .attr('width', d => d.width)
-    .attr('height', d => d.height)
-    .style('fill', 'transparent')
-    .style('pointer-events', 'all');
 
     // Animation for individual group addition
     if (this.lastLabelNames.size > 0) {
@@ -99,7 +89,9 @@ export function drawLabels(
       .text(d => (d.lines.length > 1 ? null : d.lines[0]))
       .attr('paint-order', 'stroke')
       .style('stroke', '#fff')
-      .style('stroke-width', 3.2 / this.curZoomTransform.k);
+      .style('stroke-width', 3.2 / this.curZoomTransform.k)
+      .style("cursor", "pointer") 
+      .style('pointer-events', 'all'); // Make label clickable, to print window
 
     text
       .append('tspan')

@@ -9,6 +9,7 @@ import type { Embedding } from './Embedding';
 import { updatePopperTooltip } from './EmbeddingLabel';
 import fragmentShader from './shaders/point.frag?raw';
 import vertexShader from './shaders/point.vert?raw';
+import OCL from "openchemlib";
 
 const DEBUG = config.debug;
 
@@ -551,6 +552,14 @@ export function highlightPoint(
         )}"
       >`;
     }
+  }
+  if (point.prompt.includes("; Scaffold: ")) {// handle chemical data
+    let parts = point.prompt.split("; Scaffold: ");
+    let mol = OCL.Molecule.fromSmiles(parts[0]);
+    const mol_svg = mol.toSVG(100, 100, {autoCrop: true});
+    this.hoverPoint.tooltip = `<div class="tooltip-image-container" style="background:white;">
+        <div class="tooltip-image">${mol_svg}</div>
+      </div>`;
   }
 
   if (this.gridData?.jsonPoint !== undefined) {
